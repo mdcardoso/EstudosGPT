@@ -1,0 +1,1286 @@
+Public Sub Spu_SincronizaCiclos(Optional ByVal vaAjustaGrupoPrincipal As Boolean = False)
+
+        Dim I_l_DVCiclos As New DataView
+        Dim I_l_DVCiclosAuxiliar As New DataView
+        Dim I_l_DVEventosClassificadores As New DataView
+        Dim I_l_DVEventosClassificAntes As New DataView
+        Dim I_l_DVEventosComplementares As New DataView
+        Dim I_l_LinhaEventoClassificador As DataRowView
+        Dim I_l_LinhaEventoComplementar As DataRowView
+        Dim I_l_LinhaEventoInicioSincronização As DataRowView
+        Dim I_l_LinhaCiclo As DataRowView
+        Dim I_l_HorizonteCiclo As DateTime
+        Dim I_l_EventoInicioCiclo As Boolean
+        Dim I_l_EventoInicioCicloExistente As Boolean
+        Dim I_l_GrupoInternoCiclo As Boolean
+        Dim I_l_IDCicloGrupo As Integer
+        Dim I_l_PrimeiroEventoRestrição As Boolean
+
+        Try
+
+            ' ***************************************************************************************************************
+            ' Os métodos de atualização dos Controles de Situação foram comentados devido ao processo de Agrupamento Executado
+            ' no Envio dos Dados, o qual valida e sinaliza a existencia de ajustes nas duracoes dos eventos
+            ' ***************************************************************************************************************
+
+            ' ***************************************************************************************************************
+            ' CARREGA O UNIVERSO DA RESTRIÇÃO OPERATIVA PARA O EQUIPAMENTO EM QUESTÃO
+            ' ***************************************************************************************************************
+            Me.Spi_CarregaUniversoRestrição()
+
+            If (Me.Eventos.Rows.Count = 0) Then Exit Sub
+
+            ' ***************************************************************************************************************
+            ' INICIA OS PROCEDIMENTOS DE IDENTIFICAÇÃO DE INICIO DE SINCRONIZAÇÃO
+            ' ***************************************************************************************************************
+
+            ' VERIFICA SE O EVENTO ALVO DA RESTRIÇÃO SE ENCONTRA DENTRO DE ALGUM CICLO EXISTENTE
+            I_l_DVCiclos.Table = Me.Ciclos
+            I_l_DVCiclosAuxiliar.Table = Me.Ciclos
+
+            I_l_DVEventosClassificadores.Table = Me.Eventos
+            I_l_DVEventosComplementares.Table = Me.Eventos
+            I_l_DVEventosClassificadores.RowFilter = "FLG_INICIORESTRICAO = " & True
+            I_l_DVEventosClassificadores.Sort = "DIN_OCORRENCIA"
+
+            ' VERIFICA SE EXISTE RESTRIÇÃO DE LONGA DURAÇÃO
+            If (Me.DuraçãoContratadaLonga = Me.DuraçãoRestritivaLonga) Then
+                Me.ExisteRestriçãoLonga = False
+            Else
+                Me.ExisteRestriçãoLonga = True
+            End If
+
+            ' VERIFICA SE EXISTE RESTRIÇÃO DE CURTA DURAÇÃO
+            If (Me.DuraçãoContratadaCurta = Me.DuraçãoRestritivaCurta) Then
+
+                ' NÃO EXISTE RESTRIÇÃO DE CURTA E NÃO É NECESSÁRIA A SINCRONIZAÇÃO DE CICLOS
+
+                ' RECUPERA O EVENTOS CLASSIFICADOR ALVO DA RESTRIÇÃO
+                I_l_DVEventosClassificadores.RowFilter = "ID_GRUPO = " & Me.GrupoEspecial &
+                                                        " AND FLG_INICIORESTRICAO = " & True
+
+                ' RECUPERA O EVENTO COMPLEMTAR DA RESTRIÇÃO EM QUESTÃO 
+                I_l_DVEventosComplementares.RowFilter = "ID_GRUPO = " & Me.GrupoEspecial &
+                                                        " AND FLG_INICIORESTRICAO = " & False
+
+                ' VERIFICA SE A DURAÇÃO DO GRUPO CABE NO HORIZONTE DO CICLO A SER CRIADO
+                If I_l_DVEventosComplementares.Count > 0 Then
+                    Me.DuraçãoGrupo = DateDiff(DateInterval.Minute,
+                                        I_l_DVEventosClassificadores(0).Item("DIN_OCORRENCIA"),
+                                        I_l_DVEventosComplementares(0).Item("DIN_OCORRENCIA"))
+                Else
+                    Me.DuraçãoGrupo = 0
+                End If
+
+
+                Me.ExisteRestriçãoCurta = False
+                Exit Sub
+
+            Else
+
+                Me.ExisteRestriçãoCurta = True
+
+            End If
+
+            ' PRIMEIRAMENTE VERIFICA SE O EVENTO CLASSIFICADOR DA RESTRIÇÃO É O INÍCIO DE ALGUM CICLO
+            I_l_DVCiclos.RowFilter = "DIN_INICIOCICLO  = '" & Me.DataOcorrencia & "'"
+            If (I_l_DVCiclos.Count = 1) Then
+
+                I_l_LinhaCiclo = I_l_DVCiclos(0)
+
+                ' O EVENTO ALVO DA RESTRIÇÃO É O INICIO DE UM CICLO, AGORA VERIFICA SE
+                ' ESTE CICLO PERTENCE AO GRUPO DELE OU SE FOI GERADO POR GRUPO ANTERIOR
+
+                ' RECUPERA OS EVENTOS CLASSIFICADORES ANTERIORES AO EVENTO ALVO DA RESTRIÇÃO
+                I_l_DVEventosClassificadores.RowFilter = "FLG_INICIORESTRICAO = " & True &
+                                                        " AND DIN_OCORRENCIA < '" & Me.DataOcorrencia & "'"
+
+                If (I_l_DVEventosClassificadores.Count > 0) Then
+
+                    ' ORDENA DE FORMA DECRESCENTE PARA TESTAR OS EVENTOS ANTERIORES AO EVENTO ALVO DA RESTRIÇÃO
+                    I_l_DVEventosClassificadores.Sort = "DIN_OCORRENCIA DESC"
+
+                    For Each I_l_LinhaEventoClassificador In I_l_DVEventosClassificadores
+
+                        ' VERIFICA QUAL EVENTO ANTERIOR AO EVENTO EM PROCESSO DE RESTRIÇÃO INICIA CICLOS ANTERIORES AO CICLO EM QUESTÃO
+                        I_l_DVCiclosAuxiliar.RowFilter = "DIN_INICIOCICLO = '" & I_l_LinhaEventoClassificador.Item("DIN_OCORRENCIA") & "'"
+
+                        If (I_l_DVCiclosAuxiliar.Count = 1) Then
+
+                            ' VERIFICA SE O CICLO GERADO PELO EVENTO ANTERIOR É O MESMO CICLO IDENTIFICADO NO EVENTO ALVO DA RESTRIÇÃO
+                            If (I_l_DVCiclosAuxiliar(0).Item("DIN_INICIOCICLO") = I_l_LinhaCiclo.Item("DIN_INICIOCICLO")) Then
+
+                                I_l_LinhaEventoInicioSincronização = I_l_LinhaEventoClassificador
+                                I_l_EventoInicioCiclo = False
+                                I_l_EventoInicioCicloExistente = False
+                                Exit For
+
+                            Else
+
+                                ' VERIFICA SE O EVENTO EM QUESTÃO ESTA DENTRO DO HORIZONTE DO CICLO ANTERIOR
+                                If (Me.DataOcorrencia >= I_l_DVCiclosAuxiliar(0).Item("DIN_INICIOCICLO") And
+                                    Me.DataOcorrencia <= I_l_DVCiclosAuxiliar(0).Item("DIN_FIMCICLO")) Then
+
+                                    I_l_LinhaEventoInicioSincronização = I_l_LinhaEventoClassificador
+                                    I_l_EventoInicioCiclo = False
+                                    I_l_EventoInicioCicloExistente = False
+                                    Exit For
+
+                                Else
+
+                                    I_l_EventoInicioCiclo = True
+                                    I_l_EventoInicioCicloExistente = True
+                                    I_l_IDCicloGrupo = I_l_LinhaCiclo.Item("ID_CICLO")
+
+                                End If
+
+                            End If
+
+                        End If
+
+                    Next
+
+                    ' VERIFICA SE O EVENTO FOI CARACTERIZADO
+                    If (IsNothing(I_l_LinhaEventoInicioSincronização)) Then
+                        I_l_LinhaEventoInicioSincronização = I_l_LinhaEventoClassificador
+                    End If
+
+                Else
+
+                    I_l_EventoInicioCiclo = True
+                    I_l_EventoInicioCicloExistente = True
+                    I_l_IDCicloGrupo = I_l_LinhaCiclo.Item("ID_CICLO")
+
+                End If
+
+            Else
+
+                ' EVENTO NÃO FOI CARACTERIZADO COMO SENDO O INICIO DE NENHUM CICLO
+                ' VERIFICA SE O MESMO SE ENCONTRA DENTRO DE ALGUM CICLO EXISTENTE
+
+                ' RECUPERA O EVENTO COMPLEMTAR DA RESTRIÇÃO EM QUESTÃO PARA ANALISAR SE ESTE SE ENCONTRA DENTRO DE ALGUM CICLO EXISTENTE
+                I_l_DVEventosComplementares.RowFilter = "ID_GRUPO = " & Me.GrupoEspecial &
+                                                        " AND FLG_INICIORESTRICAO = " & False
+
+                If I_l_DVEventosComplementares.Count > 0 Then
+                    I_l_LinhaCiclo = Me.Fpi_RetornaCicloCompatível(Me.DataOcorrencia, I_l_DVEventosComplementares(0).Item("DIN_OCORRENCIA"))
+                End If
+
+                If (Not IsNothing(I_l_LinhaCiclo)) Then
+
+                    I_l_GrupoInternoCiclo = True
+
+                    ' RECUPERA OS EVENTOS CLASSIFICADORES ANTERIORES AO EVENTO ALVO DA RESTRIÇÃO PARA IDENTIFICAR O EVENTO GERADOR DO
+                    ' CICLO NO QUAL O EVENTO ALVO DA RESTRIÇÃO SE ENQUADRA
+                    I_l_DVEventosClassificadores.RowFilter = "FLG_INICIORESTRICAO = " & True &
+                                                            " AND DIN_OCORRENCIA < '" & Me.DataOcorrencia & "'"
+
+                    If (I_l_DVEventosClassificadores.Count > 0) Then
+
+                        ' ORDENA DE FORMA DECRESCENTE PARA TESTAR OS EVENTO ANTERIORES AO EVENTO ALVO DA RESTRIÇÃO
+                        I_l_DVEventosClassificadores.Sort = "DIN_OCORRENCIA DESC"
+
+                        For Each I_l_LinhaEventoClassificador In I_l_DVEventosClassificadores
+
+                            ' VERIFICA QUAL EVENTO ANTERIOR AO EVENTO EM PROCESSO DE RESTRIÇÃO INICIA CICLOS ANTERIORES AO CICLO EM QUESTÃO
+                            I_l_DVCiclosAuxiliar.RowFilter = "DIN_INICIOCICLO = '" & I_l_LinhaEventoClassificador.Item("DIN_OCORRENCIA") & "'"
+
+                            If (I_l_DVCiclosAuxiliar.Count = 1) Then
+
+                                ' VERIFICA SE O CICLO GERADO PELO EVENTO ANTERIOR É O MESMO CICLO IDENTIFICADO NO EVENTO ALVO DA RESTRIÇÃO
+                                If (I_l_DVCiclosAuxiliar(0).Item("DIN_INICIOCICLO") = I_l_LinhaCiclo.Item("DIN_INICIOCICLO")) Then
+
+                                    I_l_LinhaEventoInicioSincronização = I_l_LinhaEventoClassificador
+                                    Exit For
+
+                                End If
+
+                            End If
+
+                        Next
+
+                        ' VERIFICA SE ALGUM EVENTO FOI CARACTERIZADO COMO INICIO DO CICLO
+                        If (IsNothing(I_l_LinhaEventoInicioSincronização)) Then
+
+                            ' NENHUM EVENTO FOI CARACTERIZADO COMO INICIO DO PRIMEIRO CICLO, SENDO ASSIM O PRIMEIRO EVENTO DE RESTRIÇÃO 
+                            ' É CARACTRIZADO COMO TAL
+                            I_l_DVEventosClassificadores.RowFilter = ""
+                            I_l_DVEventosClassificadores.Sort = "DIN_OCORRENCIA"
+                            I_l_LinhaEventoInicioSincronização = I_l_DVEventosClassificadores(0)
+
+                        End If
+
+                    Else
+
+                        ' NENHUM EVENTO FOI CARACTERIZADO COMO INICIO DO PRIMEIRO CICLO, SENDO ASSIM 
+                        ' O PRIMEIRO EVENTO DE RESTRIÇÃO É CARACTRIZADO COMO TAL
+                        I_l_DVEventosClassificadores.RowFilter = ""
+                        I_l_DVEventosClassificadores.Sort = "DIN_OCORRENCIA"
+                        I_l_LinhaEventoInicioSincronização = I_l_DVEventosClassificadores(0)
+
+                        I_l_PrimeiroEventoRestrição = True
+
+                    End If
+
+                Else
+
+                    ' VERIFICA SE O EVENTO IDENTIFICADOR SE ENCONTRA DENTRO DE ALGUM CICLO EXISTENTE
+                    If I_l_DVEventosComplementares.Count > 0 Then
+                        I_l_LinhaCiclo = Me.Fpi_RetornaCicloIdentificador(Me.DataOcorrencia, I_l_DVEventosComplementares(0).Item("DIN_OCORRENCIA"))
+                    End If
+
+                    If (Not IsNothing(I_l_LinhaCiclo)) Then
+
+                        ' RECUPERA O EVENTO CLASSIFICA PERÍODO GERADOR DO CICLO
+                        Dim I_l_DVCicloAux01 As New DataView
+                        Dim I_l_LinhaCicloAux01 As DataRowView
+                        Dim I_l_ProximoCiclo As Boolean = False
+                        Dim I_l_IndiceEventoInicio As Integer
+                        Dim I_l_DVEventosAux01 As New DataView
+                        I_l_DVCicloAux01.Table = Me.Ciclos
+                        I_l_DVEventosAux01.Table = Me.Eventos
+                        I_l_DVCicloAux01.Sort = "DIN_INICIOCICLO DESC"
+
+                        For Each I_l_LinhaCicloAux01 In I_l_DVCicloAux01
+
+                            If (I_l_ProximoCiclo = True) Then
+
+                                I_l_DVEventosAux01.RowFilter = "DIN_OCORRENCIA = '" & I_l_LinhaCicloAux01.Item("DIN_INICIOCICLO") & "'"
+                                If (I_l_DVEventosAux01.Count = 1) Then
+                                    I_l_LinhaEventoInicioSincronização = I_l_DVEventosAux01(0)
+                                    Exit For
+                                End If
+
+                            End If
+
+                            If (I_l_LinhaCiclo.Item("ID_CICLO") = I_l_LinhaCicloAux01.Item("ID_CICLO")) Then
+
+                                I_l_ProximoCiclo = True
+
+                                I_l_DVEventosAux01.RowFilter = "DIN_OCORRENCIA = '" & I_l_LinhaCicloAux01.Item("DIN_INICIOCICLO") & "'"
+                                If (I_l_DVEventosAux01.Count = 1) Then
+                                    I_l_LinhaEventoInicioSincronização = I_l_DVEventosAux01(0)
+                                    Exit For
+                                End If
+
+                            End If
+
+                        Next
+
+                    End If
+
+                    ' DETERMINA O HORIZONTE DO CICLO
+                    I_l_HorizonteCiclo = DateAdd(DateInterval.Minute, Me.QtdMinutosCurtaDuraçãoCiclo, Me.DataOcorrencia)
+
+                    I_l_DVCiclos.RowFilter = "DIN_INICIOCICLO  <= '" & I_l_HorizonteCiclo & "'" &
+                                            " AND DIN_FIMCICLO >= '" & I_l_HorizonteCiclo & "'"
+
+                    If (I_l_DVCiclos.Count > 0) Then
+                        I_l_GrupoInternoCiclo = True
+                    Else
+                        I_l_GrupoInternoCiclo = False
+                        I_l_EventoInicioCiclo = True
+                    End If
+
+                End If
+
+            End If
+
+            ' ***************************************************************************************************************
+            ' INICIA OS PROCEDIMENTOS DE SINCRONIZAÇÃO DE CICLOS DE RESTRIÇÃO OPERATIVA
+            ' ***************************************************************************************************************
+            Dim I_l_DuraçãoGrupo As Long
+            Dim I_l_DuraçãoCiclo As Long
+            Dim I_l_ExcedenteGrupo As Integer
+            Dim I_l_QtdCiclosGrupo As Double
+            Dim I_l_ContadorAuxiliar As Integer
+            Dim I_l_DataInicialCiclo As DateTime
+            Dim I_l_AjusteDuracaoCurta As Integer
+            Dim I_l_NovaLinhaCiclo As Satra_DS_RestriçãoOperativa.CiclosRow
+            Dim I_l_IndiceCiclo As Integer
+            Dim I_l_MinutosDisponíveisCurta As Double
+            Dim I_l_DataInicioSincronismo As Date
+
+            If (I_l_EventoInicioCiclo = True And I_l_GrupoInternoCiclo = False) Then
+
+                ' CICLO DA RESTRIÇÃO EM QUESTÃO NÃO FARA INTERSEÇÃO COM CICLOS EXISTENTES
+
+                ' RECUPERA O EVENTO COMPLEMTAR DA RESTRIÇÃO EM QUESTÃO PARA ANALISAR SE ESTE SE ENCONTRA DENTRO DE ALGUM CICLO EXISTENTE
+                I_l_DVEventosComplementares.RowFilter = "ID_GRUPO = " & Me.GrupoEspecial &
+                                                        " AND FLG_INICIORESTRICAO = " & False
+
+                If I_l_DVEventosComplementares.Count > 0 Then
+
+                    ' VERIFICA SE A DURAÇÃO DO GRUPO CABE NO HORIZONTE DO CICLO A SER CRIADO
+                    I_l_DuraçãoGrupo = DateDiff(DateInterval.Minute,
+                                                Me.DataOcorrencia,
+                                                I_l_DVEventosComplementares(0).Item("DIN_OCORRENCIA"))
+
+                Else
+
+                    I_l_DuraçãoGrupo = 0
+
+                End If
+                ' DETERMINA O HORIZONTE DO CICLO
+                I_l_HorizonteCiclo = DateAdd(DateInterval.Minute, Me.QtdMinutosCiclo, Me.DataOcorrencia)
+
+                ' QUANTIDADE UTILIZADAS DE HORAS DE MINUTOS DURAÇÃO 
+                Me.QtdMinutosUtilizadosCurtaDuração = IIf(I_l_DuraçãoGrupo >= Me.QtdMinutosCurtaDuraçãoCiclo, Me.QtdMinutosCurtaDuraçãoCiclo, I_l_DuraçãoGrupo)
+
+                ' QUANTIDADE DISPONÍVEL DE HORAS DE CURTA DURAÇÃO É A MÁXIMA PARAMETRIZADA PARA O TIPO DE EQP EM QUESTÃO
+                ' MENOS A DURACAO DO GRUPO
+                Me.QtdMinutosDisponíveisCurtaDuração = Me.QtdMinutosCurtaDuraçãoCiclo
+
+                ' AJUSTA AS QUANTIDADES UTILIZADAS E DISPONIBILIZADAS
+                If (I_l_DuraçãoGrupo > Me.QtdMinutosContínuosCurtaDuraçãoLTR And Me.TPEQP = "LTR") Then
+                    Me.QtdMinutosUtilizadosCurtaDuração = Me.QtdMinutosContínuosCurtaDuraçãoLTR
+                    Me.QtdMinutosDisponíveisCurtaDuração = Me.QtdMinutosContínuosCurtaDuraçãoLTR
+                End If
+
+                Me.DuraçãoGrupo = I_l_DuraçãoGrupo
+
+                If (I_l_EventoInicioCicloExistente = False) Then
+
+                    If (Me.TPEQP = "TRF" Or Me.TPEQP = "TR2" Or Me.TPEQP = "TR3") AndAlso Me.DuraçãoGrupo > Me.QtdMinutosCiclo Then
+                        Dim quatidadeDeMinutosRestanteNoCicloAtual As Integer
+                        Dim quantidadeDias As Integer
+
+                        quantidadeDias = Math.Truncate(I_l_DuraçãoGrupo / 1440)
+
+                        quatidadeDeMinutosRestanteNoCicloAtual = I_l_DuraçãoGrupo Mod 1440
+
+                        If quatidadeDeMinutosRestanteNoCicloAtual >= 240 Then
+                            quatidadeDeMinutosRestanteNoCicloAtual = 240
+                        End If
+
+                        Me.QtdMinutosUtilizadosCurtaDuração = IIf(quatidadeDeMinutosRestanteNoCicloAtual >= Me.QtdMinutosCurtaDuraçãoCiclo, 0, quatidadeDeMinutosRestanteNoCicloAtual)
+
+                        Me.QtdMinutosDisponíveisCurtaDuração = (quantidadeDias * 240) + quatidadeDeMinutosRestanteNoCicloAtual
+
+                        If quantidadeDias > 0 Then
+                            For index As Integer = 0 To quantidadeDias
+                                Dim inicioNovoCiclo = DateAdd(DateInterval.Minute, Me.QtdMinutosCiclo * index, Me.DataOcorrencia)
+                                Dim HorizonteNovoCiclo = DateAdd(DateInterval.Minute, Me.QtdMinutosCiclo, inicioNovoCiclo)
+                                I_l_ExcedenteGrupo = DateDiff(DateInterval.Minute, inicioNovoCiclo, I_l_DVEventosComplementares(0).Item("DIN_OCORRENCIA")) - Math.Truncate(DateDiff(DateInterval.Minute, inicioNovoCiclo, I_l_DVEventosComplementares(0).Item("DIN_OCORRENCIA")) / Me.QtdMinutosCiclo) * Me.QtdMinutosCiclo
+                                Dim QtdMinutosUtilizadosCurtaDuraçãoNovo = IIf(index < quantidadeDias, Me.QtdMinutosCurtaDuraçãoCiclo, IIf(I_l_ExcedenteGrupo >= Me.QtdMinutosCurtaDuraçãoCiclo, Me.QtdMinutosCurtaDuraçãoCiclo, I_l_ExcedenteGrupo))
+
+                                ' GRUPO DA RESTRIÇÃO AINDA NÃO POSSUI CICLO CRIADO
+
+                                ' CRIA O CICLO DA RESTRIÇÃO EM QUESTÃO
+                                Me.Fpi_InsertCiclo(inicioNovoCiclo,
+                                                HorizonteNovoCiclo,
+                                                Me.QtdMinutosCurtaDuraçãoCiclo,
+                                                QtdMinutosUtilizadosCurtaDuraçãoNovo,
+                                                False)
+
+                                ' ADICIONA O CICLO NA ESTRUTURA DE MEMÓRIA
+                                I_l_NovaLinhaCiclo = Me.Ciclos.NewCiclosRow
+
+                                I_l_NovaLinhaCiclo.Id_Ciclo = Fpi_GeraContadorCiclo()
+                                I_l_NovaLinhaCiclo.TpEqp_Id = Me.TPEQP
+                                I_l_NovaLinhaCiclo.Eqp_Id = Me.EQP
+                                I_l_NovaLinhaCiclo.Din_InicioCiclo = inicioNovoCiclo
+                                I_l_NovaLinhaCiclo.Din_FimCiclo = HorizonteNovoCiclo
+                                I_l_NovaLinhaCiclo.Qtd_MinutoCiclo = Me.QtdMinutosCurtaDuraçãoCiclo
+                                I_l_NovaLinhaCiclo.Qtd_MinutoUtilizado = QtdMinutosUtilizadosCurtaDuraçãoNovo
+
+                                Me.Ciclos.AddCiclosRow(I_l_NovaLinhaCiclo)
+                            Next
+
+                        End If
+
+                    Else
+                        ' GRUPO DA RESTRIÇÃO AINDA NÃO POSSUI CICLO CRIADO
+
+                        ' CRIA O CICLO DA RESTRIÇÃO EM QUESTÃO
+                        Me.Fpi_InsertCiclo(Me.DataOcorrencia,
+                                        I_l_HorizonteCiclo,
+                                        Me.QtdMinutosCurtaDuraçãoCiclo,
+                                        Me.QtdMinutosUtilizadosCurtaDuração,
+                                        False)
+
+                        ' ADICIONA O CICLO NA ESTRUTURA DE MEMÓRIA
+                        I_l_NovaLinhaCiclo = Me.Ciclos.NewCiclosRow
+
+                        I_l_NovaLinhaCiclo.Id_Ciclo = Fpi_GeraContadorCiclo()
+                        I_l_NovaLinhaCiclo.TpEqp_Id = Me.TPEQP
+                        I_l_NovaLinhaCiclo.Eqp_Id = Me.EQP
+                        I_l_NovaLinhaCiclo.Din_InicioCiclo = Me.DataOcorrencia
+                        I_l_NovaLinhaCiclo.Din_FimCiclo = I_l_HorizonteCiclo
+                        I_l_NovaLinhaCiclo.Qtd_MinutoCiclo = Me.QtdMinutosCurtaDuraçãoCiclo
+                        I_l_NovaLinhaCiclo.Qtd_MinutoUtilizado = Me.QtdMinutosUtilizadosCurtaDuração
+
+                        Me.Ciclos.AddCiclosRow(I_l_NovaLinhaCiclo)
+                    End If
+
+                Else
+
+                    If (Me.TPEQP = "TRF" Or Me.TPEQP = "TR2" Or Me.TPEQP = "TR3") AndAlso Me.DuraçãoGrupo > Me.QtdMinutosCiclo Then
+                        Dim quatidadeDeMinutosRestanteNoCicloAtual As Integer
+                        Dim quantidadeDias As Integer
+
+                        quantidadeDias = Math.Truncate(I_l_DuraçãoGrupo / 1440)
+
+                        ''Como ele já está dentro de um ciclo
+                        Dim QtdMinutosUtilizadosCurtaDuraçãoComplemento = Me.QtdMinutosUtilizadosCurtaDuração
+
+                        quatidadeDeMinutosRestanteNoCicloAtual = I_l_DuraçãoGrupo Mod 1440
+
+                        If quatidadeDeMinutosRestanteNoCicloAtual >= 240 Then
+                            quatidadeDeMinutosRestanteNoCicloAtual = 240
+                        End If
+
+                        Me.QtdMinutosUtilizadosCurtaDuração = IIf(quatidadeDeMinutosRestanteNoCicloAtual >= Me.QtdMinutosCurtaDuraçãoCiclo, 0, quatidadeDeMinutosRestanteNoCicloAtual)
+
+                        Me.QtdMinutosDisponíveisCurtaDuração = (quantidadeDias * 240) + quatidadeDeMinutosRestanteNoCicloAtual
+
+                        If quantidadeDias > 0 Then
+
+                            'I_l_LinhaCiclo.Item("DIN_INICIOCICLO")
+                            Dim dataInicioCicloContido = I_l_LinhaCiclo.Item("DIN_INICIOCICLO")
+                            Dim dataFimCicloContido = I_l_LinhaCiclo.Item("DIN_FIMCICLO")
+                            ' GRUPO DA RESTRIÇÃO POSSUI CICLO CRIADO
+
+                            I_l_IndiceCiclo = I_g_Util.Fpu_DatasetFind(Me.Ciclos,
+                                                                "ID_CICLO",
+                                                                I_l_IDCicloGrupo)
+
+                            If Me.Ciclos.Rows(I_l_IndiceCiclo).Item("QTD_MINUTOUTILIZADO") < Me.QtdMinutosCurtaDuraçãoCiclo Then
+                                ' ATUALIZA A QUANTIDADE DE HORAS DO CICLO NA BASE E EM MEMÓRIA
+                                Me.Fpi_UpdateCiclo(Me.DataOcorrencia,
+                                            QtdMinutosUtilizadosCurtaDuraçãoComplemento,
+                                            False)
+
+                                Me.Ciclos.Rows(I_l_IndiceCiclo).Item("QTD_MINUTOUTILIZADO") = QtdMinutosUtilizadosCurtaDuraçãoComplemento
+                            End If
+
+                            Dim inicioOcorrencia = Me.Ciclos.Rows(I_l_IndiceCiclo).Item("DIN_FIMCICLO")
+                            For index As Integer = 1 To quantidadeDias
+                                Dim inicioNovoCiclo = DateAdd(DateInterval.Minute, Me.QtdMinutosCiclo * index, inicioOcorrencia)
+                                Dim HorizonteNovoCiclo = DateAdd(DateInterval.Minute, Me.QtdMinutosCiclo, inicioNovoCiclo)
+                                Dim QtdMinutosUtilizadosCurtaDuraçãoNovo = IIf(index < quantidadeDias, 0, QtdMinutosUtilizadosCurtaDuração)
+
+                                ' GRUPO DA RESTRIÇÃO AINDA NÃO POSSUI CICLO CRIADO
+
+                                ' CRIA O CICLO DA RESTRIÇÃO EM QUESTÃO
+
+                                'I_l_IndiceCiclo = I_g_Util.Fpu_DatasetFind(Me.Ciclos,
+                                '                                "DIN_INICIOCICLO",
+                                '                                inicioNovoCiclo)
+
+                                'If Not IsNothing(I_l_IndiceCiclo) Then
+                                '    Me.Fpi_UpdateCiclo(inicioNovoCiclo,
+                                '       QtdMinutosUtilizadosCurtaDuraçãoNovo,
+                                '       False)
+                                'Else
+                                If IsNothing(I_l_IndiceCiclo) Then
+                                    Me.Fpi_InsertCiclo(inicioNovoCiclo,
+                                               HorizonteNovoCiclo,
+                                               Me.QtdMinutosCurtaDuraçãoCiclo,
+                                               QtdMinutosUtilizadosCurtaDuraçãoNovo,
+                                               False)
+                                End If
+
+
+                                ' ADICIONA O CICLO NA ESTRUTURA DE MEMÓRIA
+                                I_l_NovaLinhaCiclo = Me.Ciclos.NewCiclosRow
+
+                                I_l_NovaLinhaCiclo.Id_Ciclo = Fpi_GeraContadorCiclo()
+                                I_l_NovaLinhaCiclo.TpEqp_Id = Me.TPEQP
+                                I_l_NovaLinhaCiclo.Eqp_Id = Me.EQP
+                                I_l_NovaLinhaCiclo.Din_InicioCiclo = inicioNovoCiclo
+                                I_l_NovaLinhaCiclo.Din_FimCiclo = HorizonteNovoCiclo
+                                I_l_NovaLinhaCiclo.Qtd_MinutoCiclo = Me.QtdMinutosCurtaDuraçãoCiclo
+                                I_l_NovaLinhaCiclo.Qtd_MinutoUtilizado = QtdMinutosUtilizadosCurtaDuraçãoNovo
+
+                                Me.Ciclos.AddCiclosRow(I_l_NovaLinhaCiclo)
+                                'End If
+
+                            Next
+
+                        End If
+
+                    Else
+                        ' GRUPO DA RESTRIÇÃO POSSUI CICLO CRIADO
+
+                        'I_l_IndiceCiclo = I_g_Util.Fpu_DatasetFind(Me.Ciclos,
+                        '                                        "ID_CICLO",
+                        '                                        I_l_IDCicloGrupo)
+
+
+                        'If Me.Ciclos.Rows(I_l_IndiceCiclo).Item("QTD_MINUTOUTILIZADO") < Me.QtdMinutosCurtaDuraçãoCiclo Then
+                        '    Me.Fpi_UpdateCiclo(Me.DataOcorrencia,
+                        '               Me.QtdMinutosUtilizadosCurtaDuração,
+                        '               False)
+                        '    Me.Ciclos.Rows(I_l_IndiceCiclo).Item("QTD_MINUTOUTILIZADO") = Me.QtdMinutosUtilizadosCurtaDuração
+                        'End If
+
+
+
+                        ' ATUALIZA A QUANTIDADE DE HORAS DO CICLO NA BASE E EM MEMÓRIA
+
+
+
+
+                    End If
+
+                End If
+
+            Else
+
+                ' SINCRONIZA OS CICLOS A PARTIR DO EVENTO IDENTIFICADO COMO INICIO DA SINCRONIZAÇÃO
+
+                ' DELETA OS CICLOS DO HORIZONTE DA SINCRONIZAÇÃO
+                If (I_l_PrimeiroEventoRestrição = True Or IsNothing(I_l_LinhaEventoInicioSincronização)) Then
+                    Me.Fpi_DeleteCiclo("", Date.MinValue, False)
+                Else
+                    Me.Fpi_DeleteCiclo("", I_l_LinhaEventoInicioSincronização.Item("DIN_OCORRENCIA"), False)
+                End If
+
+
+                Me.Spi_GetCiclos()
+                I_l_DVCiclos.Table = Me.Ciclos
+                I_l_DVCiclosAuxiliar.Table = Me.Ciclos
+
+                If (Not IsNothing(I_l_LinhaEventoInicioSincronização)) Then
+                    I_l_DVEventosClassificadores.RowFilter = "FLG_INICIORESTRICAO = " & True &
+                                                            " AND DIN_OCORRENCIA >= '" & I_l_LinhaEventoInicioSincronização.Item("DIN_OCORRENCIA") & "'"
+                Else
+                    I_l_DVEventosClassificadores.RowFilter = "FLG_INICIORESTRICAO = " & True
+                End If
+
+                ' PERCORRE TODOS OS EVENTOS CLASSIFICADORES CRIANDO CICLOS E CALCULANDO AS HORAS DISPONÍVEIS DE CURTA
+                ' DURAÇÃO JUNTAMENTE COM A DURAÇÃO DOS GRUPOS IDENTIFICADOS
+                I_l_DVEventosClassificadores.Sort = "DIN_OCORRENCIA"
+                For Each I_l_LinhaEventoClassificador In I_l_DVEventosClassificadores
+
+                    If (Not IsNothing(I_l_LinhaEventoInicioSincronização)) Then
+                        I_l_DVCiclos.RowFilter = "DIN_INICIOCICLO >= '" & I_l_LinhaEventoInicioSincronização.Item("DIN_OCORRENCIA") & "'"
+                    End If
+
+                    I_l_DVEventosComplementares.RowFilter = "ID_GRUPO = " & I_l_LinhaEventoClassificador.Item("ID_GRUPO") &
+                                                            " AND FLG_INICIORESTRICAO = " & False
+
+                    ' VERIFICA A EXISTENCIA DO EVENTO COMPLEMENTAR
+                    If (I_l_DVEventosComplementares.Count <> 0) Then
+
+                        I_l_LinhaEventoComplementar = I_l_DVEventosComplementares(0)
+
+                        ' VERIFICA SE A DURAÇÃO DO GRUPO CABE NO HORIZONTE DO CICLO A SER CRIADO
+                        I_l_DuraçãoGrupo = DateDiff(DateInterval.Minute,
+                                                    I_l_LinhaEventoClassificador.Item("DIN_OCORRENCIA"),
+                                                    I_l_LinhaEventoComplementar.Item("DIN_OCORRENCIA"))
+
+                        I_l_DuraçãoCiclo = DateDiff(DateInterval.Minute,
+                                                    I_l_LinhaEventoClassificador.Item("DIN_OCORRENCIA"),
+                                                    DateAdd(DateInterval.Minute,
+                                                            Me.QtdMinutosCiclo,
+                                                            I_l_LinhaEventoClassificador.Item("DIN_OCORRENCIA")))
+
+                        ' DETERMINA O HORIZONTE DO CICLO
+                        I_l_HorizonteCiclo = DateAdd(DateInterval.Minute, Me.QtdMinutosCiclo, I_l_LinhaEventoClassificador.Item("DIN_OCORRENCIA"))
+
+                        ' VERIFICA SE A DURAÇÃO DO GRUPO É COMPATÍVEL COM A DURAÇÃO DO CICLO
+                        If (I_l_DuraçãoGrupo <= I_l_DuraçãoCiclo) Then
+
+                            ' DURAÇÃO DO GRUPO É MENOR OU IGUAL A DURAÇÃO DO CICLO
+
+                            ' VERIFICA A EXISTENCIA DE CICLOS PARA O EQUIPAMENTO EM QUESTÃO
+                            If (I_l_DVCiclos.Count = 0) Then
+
+                                ' INEXISTENCIA DE CICLOS, O PRIMEIRO CICLO DA SINCRONIZAÇÃO SERÁ CRIADO
+
+
+                                ' VERIFICA SE EXISTE DURAÇÃO DE CURTA VISANDO SEU ABATIMENTO
+                                If (Me.Fpi_ExisteDuraçãoCurta(I_l_LinhaEventoClassificador) = True) Then
+                                    Me.QtdMinutosUtilizadosCurtaDuração = IIf(I_l_DuraçãoGrupo >= Me.QtdMinutosCurtaDuraçãoCiclo, Me.QtdMinutosCurtaDuraçãoCiclo, I_l_DuraçãoGrupo)
+                                Else
+                                    Me.QtdMinutosUtilizadosCurtaDuração = 0
+                                End If
+
+                                ' AJUSTA AS QUANTIDADES UTILIZADAS E DISPONIBILIZADAS
+                                If (I_l_DuraçãoGrupo > Me.QtdMinutosContínuosCurtaDuraçãoLTR And Me.TPEQP = "LTR") Then
+                                    Me.QtdMinutosUtilizadosCurtaDuração = Me.QtdMinutosContínuosCurtaDuraçãoLTR
+                                End If
+
+                                ' ADICIONA O CICLO NA BASE DE DADOS
+                                Me.Fpi_InsertCiclo(I_l_LinhaEventoClassificador.Item("DIN_OCORRENCIA"),
+                                                I_l_HorizonteCiclo,
+                                                Me.QtdMinutosCurtaDuraçãoCiclo,
+                                                Me.QtdMinutosUtilizadosCurtaDuração,
+                                                False)
+
+                                ' ADICIONA O CICLO NA ESTRUTURA DE MEMÓRIA
+                                I_l_NovaLinhaCiclo = Me.Ciclos.NewCiclosRow
+
+                                I_l_NovaLinhaCiclo.Id_Ciclo = Fpi_GeraContadorCiclo()
+                                I_l_NovaLinhaCiclo.TpEqp_Id = Me.TPEQP
+                                I_l_NovaLinhaCiclo.Eqp_Id = Me.EQP
+                                I_l_NovaLinhaCiclo.Din_InicioCiclo = I_l_LinhaEventoClassificador.Item("DIN_OCORRENCIA")
+                                I_l_NovaLinhaCiclo.Din_FimCiclo = I_l_HorizonteCiclo
+                                I_l_NovaLinhaCiclo.Qtd_MinutoCiclo = Me.QtdMinutosCurtaDuraçãoCiclo
+                                I_l_NovaLinhaCiclo.Qtd_MinutoUtilizado = Me.QtdMinutosUtilizadosCurtaDuração
+
+                                Me.Ciclos.AddCiclosRow(I_l_NovaLinhaCiclo)
+
+                                ' VERIFICA SE O CICLO CRIADO É REFRENTE AO EVENTO CAUSADOR DA SINCRONIZAÇÃO, POIS
+                                ' EM CASO POSITIVO A QUANTIDADE DE HORAS DISPONIVEIS DEVERÁ SER DISPONIBLIZADA PARA A
+                                ' ROTINA DE CÁLCULO
+                                If (Me.DataOcorrencia = I_l_LinhaEventoClassificador.Item("DIN_OCORRENCIA")) Then
+                                    Me.QtdMinutosDisponíveisCurtaDuração = Me.QtdMinutosCurtaDuraçãoCiclo
+                                    Me.DuraçãoGrupo = I_l_DuraçãoGrupo
+
+                                    ' AJUSTA AS QUANTIDADES UTILIZADAS E DISPONIBILIZADAS
+                                    If (I_l_DuraçãoGrupo > Me.QtdMinutosContínuosCurtaDuraçãoLTR And Me.TPEQP = "LTR") Then
+                                        Me.QtdMinutosDisponíveisCurtaDuração = Me.QtdMinutosContínuosCurtaDuraçãoLTR
+                                    End If
+
+                                Else
+                                    ' AJUSTA O CALCULO DAS DURAÇÕES DO GRUPO AFETADO PELO SINCRONISMO
+                                    Me.Spi_EqualizarGrupoAfetado(I_l_LinhaEventoClassificador.Item("ID_GRUPO"),
+                                                                I_l_DuraçãoGrupo,
+                                                                Me.QtdMinutosCurtaDuraçãoCiclo,
+                                                                I_l_LinhaEventoClassificador.Item("DIN_OCORRENCIA"))
+                                End If
+
+
+
+                            Else
+
+                                ' EXISTEM CICLOS PARA O EQUIPAMENTO EM QUESTÃO
+
+                                ' VERIFICA SE O GRUPO ESTARA DENTRO DE ALGUM CICLO EXISTENTE
+                                I_l_DVCiclos.RowFilter = "DIN_INICIOCICLO <= '" & I_l_LinhaEventoClassificador.Item("DIN_OCORRENCIA") & "'" &
+                                                        "AND DIN_FIMCICLO >= '" & I_l_LinhaEventoClassificador.Item("DIN_OCORRENCIA") & "'"
+
+                                If (I_l_DVCiclos.Count <> 0) Then
+
+                                    ' GRUPO ESTA DENTRO DE CICLO EXISTENTE
+
+                                    ' VERIFICA SE O FIM DO GRUPO SE ENQUADRA NOS LIMITES DO CICLO
+                                    If (I_l_DVCiclos(0).Item("DIN_FIMCICLO") >= I_l_LinhaEventoComplementar.Item("DIN_OCORRENCIA")) Then
+
+                                        ' HORIZONTES SÃO COMPATÍVEIS
+
+                                        ' VERIFICA SE O CICLO CRIADO É REFERENTE AO EVENTO CAUSADOR DA SINCRONIZAÇÃO, POIS
+                                        ' EM CASO POSITIVO A QUANTIDADE DE HORAS DISPONIVEIS DEVERÁ SER DISPONIBLIZADA PARA A
+                                        ' ROTINA DE CÁLCULO
+                                        If (Me.DataOcorrencia = I_l_LinhaEventoClassificador.Item("DIN_OCORRENCIA")) Then
+
+                                            Me.QtdMinutosDisponíveisCurtaDuração = Me.QtdMinutosCurtaDuraçãoCiclo - I_l_DVCiclos(0).Item("QTD_MINUTOUTILIZADO")
+
+                                            Me.DuraçãoGrupo = I_l_DuraçãoGrupo
+
+                                            ' AJUSTA AS QUANTIDADES UTILIZADAS E DISPONIBILIZADAS
+                                            If (I_l_DuraçãoGrupo > Me.QtdMinutosContínuosCurtaDuraçãoLTR And Me.TPEQP = "LTR") Then
+                                                Me.QtdMinutosDisponíveisCurtaDuração = Me.QtdMinutosContínuosCurtaDuraçãoLTR
+                                            End If
+
+                                        Else
+
+                                            I_l_MinutosDisponíveisCurta = Me.QtdMinutosCurtaDuraçãoCiclo - I_l_DVCiclos(0).Item("QTD_MINUTOUTILIZADO")
+
+                                            ' AJUSTA O CALCULO DAS DURAÇÕES DO GRUPO AFETADO PELO SINCRONISMO
+                                            Me.Spi_EqualizarGrupoAfetado(I_l_LinhaEventoClassificador.Item("ID_GRUPO"),
+                                                                        I_l_DuraçãoGrupo,
+                                                                        I_l_MinutosDisponíveisCurta,
+                                                                        I_l_LinhaEventoClassificador.Item("DIN_OCORRENCIA"))
+                                        End If
+
+                                        ' QUANTIDADE UTILIZADAS DE MINUTOS DE CURTA DURAÇÃO 
+                                        Dim I_l_DuraçãoUtilizadaTemp As Double
+
+                                        ' VERIFICA SE EXISTE DURAÇÃO DE CURTA VISANDO SEU ABATIMENTO
+                                        If (Me.Fpi_ExisteDuraçãoCurta(I_l_LinhaEventoClassificador) = True) Then
+                                            I_l_DuraçãoUtilizadaTemp = I_l_DVCiclos(0).Item("QTD_MINUTOUTILIZADO") + I_l_DuraçãoGrupo
+                                        Else
+                                            I_l_DuraçãoUtilizadaTemp = I_l_DVCiclos(0).Item("QTD_MINUTOUTILIZADO")
+                                        End If
+
+                                        Me.QtdMinutosUtilizadosCurtaDuração = IIf(I_l_DuraçãoUtilizadaTemp >= Me.QtdMinutosCurtaDuraçãoCiclo, Me.QtdMinutosCurtaDuraçãoCiclo, I_l_DuraçãoUtilizadaTemp)
+
+                                        ' AJUSTA AS QUANTIDADES UTILIZADAS E DISPONIBILIZADAS
+                                        If (I_l_DuraçãoGrupo > Me.QtdMinutosContínuosCurtaDuraçãoLTR And Me.TPEQP = "LTR") Then
+                                            Me.QtdMinutosUtilizadosCurtaDuração = Me.QtdMinutosContínuosCurtaDuraçãoLTR
+                                        End If
+
+                                        ' ATUALIZA A QUANTIDADE DE HORAS DO CICLO NA BASE E EM MEMÓRIA
+                                        Me.Fpi_UpdateCiclo(I_l_DVCiclos(0).Item("DIN_INICIOCICLO"),
+                                                        Me.QtdMinutosUtilizadosCurtaDuração,
+                                                        False)
+                                        I_l_IndiceCiclo = I_g_Util.Fpu_DatasetFind(Me.Ciclos,
+                                                                                "ID_CICLO",
+                                                                                I_l_DVCiclos(0).Item("ID_CICLO"))
+
+                                        Me.Ciclos.Rows(I_l_IndiceCiclo).Item("QTD_MINUTOUTILIZADO") = Me.QtdMinutosUtilizadosCurtaDuração
+
+                                    Else
+
+                                        ' HORIZONTES INCOMPATÍVEIS, HAVERÁ NECESSIIDADE DE CRIAÇÃO DE OUTROS CICLOS
+                                        Dim I_l_MinutosDisponíveisTemp As Integer
+                                        Dim I_l_UltimoCiclo As Boolean
+
+                                        ' CALCULA O EXCEDENTE DO GRUPO EM RELAÇÃO A PARCELA DO CICLO UTILIZADA PELO GRUPO
+                                        I_l_ExcedenteGrupo = DateDiff(DateInterval.Minute, I_l_DVCiclos(0).Item("DIN_FIMCICLO"), I_l_LinhaEventoComplementar.Item("DIN_OCORRENCIA"))
+
+                                        ' VERIFICA A NECESSIDADE DE CRIAÇÃO DE MAIS DE UM CICLO EM FUNÇÃO DO EXCEDENTE
+                                        If (I_l_ExcedenteGrupo > Me.QtdMinutosCiclo) Then
+
+                                            ' HA NECESSIDADE DE CRIAÇÃO DE MAIS DE UM CICLO PARA ATENDER AO GRUPO EM QUESTÃO
+                                            I_l_QtdCiclosGrupo = I_l_ExcedenteGrupo / Me.QtdMinutosCiclo
+
+                                            For I_l_ContadorAuxiliar = 1 To I_l_QtdCiclosGrupo
+
+                                                ' VERIFICA A CRIAÇÃO DO ULTIMO CICLO
+                                                If (I_l_ContadorAuxiliar = I_l_QtdCiclosGrupo) Then
+
+                                                    I_l_UltimoCiclo = True
+
+                                                    ' AJUSTA A QUANTIDADE DE HORAS PARA ESTE CICLO EM FUNÇÃO DA POSSIBILIDADE DE NÃO 
+                                                    ' UTILIZAÇÃO TOTAL DAS HORAS DE CURTA
+                                                    I_l_AjusteDuracaoCurta = I_l_DuraçãoGrupo / Me.QtdMinutosCurtaDuraçãoCiclo
+
+                                                    ' VERIFICA SE EXISTE DURAÇÃO DE CURTA VISANDO SEU ABATIMENTO
+                                                    If (Me.Fpi_ExisteDuraçãoCurta(I_l_LinhaEventoClassificador) = True) Then
+                                                        I_l_MinutosDisponíveisTemp = I_l_MinutosDisponíveisTemp + Me.QtdMinutosDisponíveisCurtaDuração
+                                                    Else
+                                                        I_l_MinutosDisponíveisTemp = 0
+                                                    End If
+
+
+                                                    ' VERIFICA SE OS CICLOS CRIADOS SÃO REFERENTES AO EVENTO CAUSADOR DA SINCRONIZAÇÃO, POIS
+                                                    ' EM CASO POSITIVO A QUANTIDADE DE HORAS DISPONIVEIS DEVERÁ SER DISPONIBLIZADA PARA A
+                                                    ' ROTINA DE CÁLCULO
+                                                    If (Me.DataOcorrencia = I_l_LinhaEventoClassificador.Item("DIN_OCORRENCIA")) Then
+
+                                                        Me.QtdMinutosDisponíveisCurtaDuração = I_l_MinutosDisponíveisTemp
+                                                        Me.DuraçãoGrupo = I_l_DuraçãoGrupo
+
+                                                        ' AJUSTA AS QUANTIDADES UTILIZADAS E DISPONIBILIZADAS
+                                                        If (I_l_DuraçãoGrupo > Me.QtdMinutosContínuosCurtaDuraçãoLTR And Me.TPEQP = "LTR") Then
+                                                            Me.QtdMinutosDisponíveisCurtaDuração = Me.QtdMinutosContínuosCurtaDuraçãoLTR
+                                                        End If
+
+                                                    Else
+                                                        ' AJUSTA O CALCULO DAS DURAÇÕES DO GRUPO AFETADO PELO SINCRONISMO
+                                                        Me.Spi_EqualizarGrupoAfetado(I_l_LinhaEventoClassificador.Item("ID_GRUPO"),
+                                                                                    I_l_DuraçãoGrupo,
+                                                                                    I_l_MinutosDisponíveisTemp,
+                                                                                    I_l_LinhaEventoClassificador.Item("DIN_OCORRENCIA"))
+                                                    End If
+
+                                                Else
+
+                                                    I_l_UltimoCiclo = False
+
+                                                    ' DETERMINA A DATA INICIAL DO PRIMEIRO CICLO
+                                                    I_l_DataInicialCiclo = DateAdd(DateInterval.Minute,
+                                                                        (Me.QtdMinutosCiclo * I_l_ContadorAuxiliar) + 1,
+                                                                        I_l_DVCiclos(0).Item("DIN_FIMCICLO"))
+
+                                                    ' VERIFICA SE EXISTE DURAÇÃO DE CURTA VISANDO SEU ABATIMENTO
+                                                    If (Me.Fpi_ExisteDuraçãoCurta(I_l_LinhaEventoClassificador) = True) Then
+                                                        I_l_MinutosDisponíveisTemp = I_l_MinutosDisponíveisTemp + Me.QtdMinutosCurtaDuraçãoCiclo
+                                                    Else
+                                                        I_l_MinutosDisponíveisTemp = 0
+                                                    End If
+
+                                                End If
+
+                                                ' DETERMINA O HORIZONTE DO CICLO
+                                                I_l_HorizonteCiclo = DateAdd(DateInterval.Minute, Me.QtdMinutosCiclo, I_l_LinhaEventoClassificador.Item("DIN_OCORRENCIA"))
+
+                                                ' DETERMINA A QUANTIDADE DE HORAS DE CURTA UTILIZADAS O CICLO
+                                                If (I_l_UltimoCiclo = True) Then
+                                                    Me.QtdMinutosUtilizadosCurtaDuração = IIf(I_l_ExcedenteGrupo >= Me.QtdMinutosCurtaDuraçãoCiclo, Me.QtdMinutosCurtaDuraçãoCiclo, I_l_ExcedenteGrupo)
+                                                Else
+                                                    Me.QtdMinutosUtilizadosCurtaDuração = Me.QtdMinutosCurtaDuraçãoCiclo
+                                                End If
+
+                                                ' AJUSTA AS QUANTIDADES UTILIZADAS E DISPONIBILIZADAS
+                                                If (I_l_DuraçãoGrupo > Me.QtdMinutosContínuosCurtaDuraçãoLTR And Me.TPEQP = "LTR") Then
+                                                    Me.QtdMinutosUtilizadosCurtaDuração = Me.QtdMinutosContínuosCurtaDuraçãoLTR
+                                                End If
+
+                                                ' ADICIONA O CICLO
+                                                Me.Fpi_InsertCiclo(I_l_LinhaEventoClassificador.Item("DIN_OCORRENCIA"),
+                                                                I_l_HorizonteCiclo,
+                                                                Me.QtdMinutosCurtaDuraçãoCiclo,
+                                                                Me.QtdMinutosUtilizadosCurtaDuração,
+                                                                False)
+
+                                                ' ADICIONA O CICLO NA ESTRUTURA DE MEMÓRIA
+                                                I_l_NovaLinhaCiclo = Me.Ciclos.NewCiclosRow
+
+                                                I_l_NovaLinhaCiclo.Id_Ciclo = Fpi_GeraContadorCiclo()
+                                                I_l_NovaLinhaCiclo.TpEqp_Id = Me.TPEQP
+                                                I_l_NovaLinhaCiclo.Eqp_Id = Me.EQP
+                                                I_l_NovaLinhaCiclo.Din_InicioCiclo = I_l_LinhaEventoClassificador.Item("DIN_OCORRENCIA")
+                                                I_l_NovaLinhaCiclo.Din_FimCiclo = I_l_HorizonteCiclo
+                                                I_l_NovaLinhaCiclo.Qtd_MinutoCiclo = Me.QtdMinutosCurtaDuraçãoCiclo
+                                                I_l_NovaLinhaCiclo.Qtd_MinutoUtilizado = Me.QtdMinutosUtilizadosCurtaDuração
+
+                                                Me.Ciclos.AddCiclosRow(I_l_NovaLinhaCiclo)
+
+                                            Next
+
+                                        Else
+                                            ' HA NECESSIDADE DE CRIAÇÃO DE APENAS MAIS UM CICLO
+                                            ' DETERMINA O HORIZONTE DO CICLO
+                                            I_l_HorizonteCiclo = DateAdd(DateInterval.Minute, Me.QtdMinutosCiclo + 1, I_l_DVCiclos(0).Item("DIN_FIMCICLO"))
+
+                                            Dim quantidadeRestanteaSetUtilizadaPrimeiroCiclo = 0
+                                            Dim duracaoPrimeiroCiclo = 0
+
+                                            If Me.TPEQP = "TRF" Or Me.TPEQP = "TR3" Or Me.TPEQP = "TR2" Then
+                                                duracaoPrimeiroCiclo = DateDiff(DateInterval.Minute,
+                                                                I_l_LinhaEventoClassificador.Item("DIN_OCORRENCIA"),
+                                                                I_l_DVCiclos(0).Item("DIN_FIMCICLO"))
+
+
+                                                quantidadeRestanteaSetUtilizadaPrimeiroCiclo = Me.QtdMinutosCurtaDuraçãoCiclo - I_l_DVCiclos(0).Item("QTD_MINUTOUTILIZADO")
+
+                                                If duracaoPrimeiroCiclo < quantidadeRestanteaSetUtilizadaPrimeiroCiclo Then
+                                                    quantidadeRestanteaSetUtilizadaPrimeiroCiclo = duracaoPrimeiroCiclo
+                                                End If
+
+                                                I_l_HorizonteCiclo = DateAdd(DateInterval.Minute, Me.QtdMinutosCiclo, I_l_DVCiclos(0).Item("DIN_FIMCICLO"))
+
+                                            End If
+
+
+                                            ' VERIFICA SE OS CICLOS CRIADOS SÃO REFERENTES AO EVENTO CAUSADOR DA SINCRONIZAÇÃO, POIS
+                                            ' EM CASO POSITIVO A QUANTIDADE DE HORAS DISPONIVEIS DEVERÁ SER DISPONIBLIZADA PARA A
+                                            ' ROTINA DE CÁLCULO
+                                            Dim I_l_MinutosDisponiveisTemp As Integer
+                                            I_l_MinutosDisponiveisTemp = Me.QtdMinutosCurtaDuraçãoCiclo - I_l_DVCiclos(0).Item("QTD_MINUTOUTILIZADO")
+
+                                            If Me.TPEQP = "TRF" Or Me.TPEQP = "TR3" Or Me.TPEQP = "TR2" Then
+                                                I_l_MinutosDisponiveisTemp = IIf(I_l_ExcedenteGrupo > Me.QtdMinutosCurtaDuraçãoCiclo, Me.QtdMinutosCurtaDuraçãoCiclo, I_l_ExcedenteGrupo)
+                                            End If
+
+                                            If (Me.DataOcorrencia = I_l_LinhaEventoClassificador.Item("DIN_OCORRENCIA")) Then
+
+                                                Me.QtdMinutosDisponíveisCurtaDuração = I_l_MinutosDisponiveisTemp + Me.QtdMinutosCurtaDuraçãoCiclo
+
+                                                If Me.TPEQP = "TRF" Or Me.TPEQP = "TR3" Or Me.TPEQP = "TR2" Then
+                                                    Me.QtdMinutosDisponíveisCurtaDuração = I_l_MinutosDisponiveisTemp
+                                                End If
+
+                                                Me.DuraçãoGrupo = I_l_DuraçãoGrupo
+
+                                                ' AJUSTA AS QUANTIDADES UTILIZADAS E DISPONIBILIZADAS
+                                                If (I_l_DuraçãoGrupo > Me.QtdMinutosContínuosCurtaDuraçãoLTR And Me.TPEQP = "LTR") Then
+                                                    Me.QtdMinutosDisponíveisCurtaDuração = Me.QtdMinutosContínuosCurtaDuraçãoLTR
+                                                End If
+
+                                                If quantidadeRestanteaSetUtilizadaPrimeiroCiclo > 0 Then
+                                                    Me.QtdMinutosCurtaDuracaoDoCicloAnterior = quantidadeRestanteaSetUtilizadaPrimeiroCiclo
+                                                End If
+
+                                            Else
+                                                If Me.TPEQP = "TRF" Or Me.TPEQP = "TR3" Or Me.TPEQP = "TR2" Then
+                                                    ' AJUSTA O CALCULO DAS DURAÇÕES DO GRUPO AFETADO PELO SINCRONISMO
+                                                    Me.Spi_EqualizarGrupoAfetado(I_l_LinhaEventoClassificador.Item("ID_GRUPO"),
+                                                                                I_l_DuraçãoGrupo,
+                                                                                I_l_MinutosDisponiveisTemp,'+ quantidadeUtilizadaPrimeiroCiclo
+                                                                                I_l_LinhaEventoClassificador.Item("DIN_OCORRENCIA"))
+                                                Else
+                                                    ' AJUSTA O CALCULO DAS DURAÇÕES DO GRUPO AFETADO PELO SINCRONISMO
+                                                    Me.Spi_EqualizarGrupoAfetado(I_l_LinhaEventoClassificador.Item("ID_GRUPO"),
+                                                                                I_l_DuraçãoGrupo,
+                                                                                I_l_MinutosDisponiveisTemp + Me.QtdMinutosCurtaDuraçãoCiclo,
+                                                                                I_l_LinhaEventoClassificador.Item("DIN_OCORRENCIA"))
+
+                                                End If
+                                            End If
+
+                                            ' DETERMINA A QUANTIDADE DE MINUTOS UTILIZADOS DE CURTA PELO GRUPO NO CICLO
+                                            Me.QtdMinutosUtilizadosCurtaDuração = IIf(I_l_DuraçãoGrupo > Me.QtdMinutosCurtaDuraçãoCiclo, Me.QtdMinutosCurtaDuraçãoCiclo, I_l_DuraçãoGrupo)
+
+                                            If Me.TPEQP = "TRF" Or Me.TPEQP = "TR3" Or Me.TPEQP = "TR2" Then
+                                                'É NECESSÁRIO VER O TEMPO QUE ELE TERÁ DE DISPONIBILIDADE NO NOVO CICLO
+                                                Me.QtdMinutosUtilizadosCurtaDuração = I_l_MinutosDisponiveisTemp + quantidadeRestanteaSetUtilizadaPrimeiroCiclo
+                                            End If
+
+                                            ' AJUSTA AS QUANTIDADES UTILIZADAS E DISPONIBILIZADAS
+                                            If (I_l_DuraçãoGrupo > Me.QtdMinutosContínuosCurtaDuraçãoLTR And Me.TPEQP = "LTR") Then
+                                                Me.QtdMinutosUtilizadosCurtaDuração = Me.QtdMinutosContínuosCurtaDuraçãoLTR
+                                            End If
+
+                                            If Me.TPEQP = "TRF" Or Me.TPEQP = "TR3" Or Me.TPEQP = "TR2" Then
+                                                If quantidadeRestanteaSetUtilizadaPrimeiroCiclo > 0 Then
+                                                    Me.Fpi_UpdateCiclo(I_l_DVCiclos(0).Item("DIN_INICIOCICLO"),
+                                                       quantidadeRestanteaSetUtilizadaPrimeiroCiclo + I_l_DVCiclos(0).Item("QTD_MINUTOUTILIZADO"),
+                                                       False)
+
+                                                    I_l_IndiceCiclo = I_g_Util.Fpu_DatasetFind(Me.Ciclos,
+                                                                                    "ID_CICLO",
+                                                                                    I_l_DVCiclos(0).Item("ID_CICLO"))
+
+                                                    Me.Ciclos.Rows(I_l_IndiceCiclo).Item("QTD_MINUTOUTILIZADO") = quantidadeRestanteaSetUtilizadaPrimeiroCiclo + I_l_DVCiclos(0).Item("QTD_MINUTOUTILIZADO")
+                                                End If
+                                            End If
+
+                                            ' ADICIONA O CICLO
+                                            If Me.TPEQP = "TRF" Or Me.TPEQP = "TR3" Or Me.TPEQP = "TR2" Then
+                                                Me.Fpi_InsertCiclo(DateAdd(DateInterval.Minute, 0, I_l_DVCiclos(0).Item("DIN_FIMCICLO")),
+                                                                   I_l_HorizonteCiclo,
+                                                                   Me.QtdMinutosCurtaDuraçãoCiclo,
+                                                                   Me.QtdMinutosUtilizadosCurtaDuração - quantidadeRestanteaSetUtilizadaPrimeiroCiclo,
+                                                                   False)
+                                            Else
+                                                Me.Fpi_InsertCiclo(DateAdd(DateInterval.Minute, 1, I_l_DVCiclos(0).Item("DIN_FIMCICLO")),
+                                                                   I_l_HorizonteCiclo,
+                                                                   Me.QtdMinutosCurtaDuraçãoCiclo,
+                                                                   Me.QtdMinutosUtilizadosCurtaDuração,
+                                                                   False)
+                                            End If
+
+                                            ' ADICIONA O CICLO NA ESTRUTURA DE MEMÓRIA
+                                            I_l_NovaLinhaCiclo = Me.Ciclos.NewCiclosRow
+
+                                            I_l_NovaLinhaCiclo.Id_Ciclo = Fpi_GeraContadorCiclo()
+                                            I_l_NovaLinhaCiclo.TpEqp_Id = Me.TPEQP
+                                            I_l_NovaLinhaCiclo.Eqp_Id = Me.EQP
+                                            I_l_NovaLinhaCiclo.Din_FimCiclo = I_l_HorizonteCiclo
+                                            I_l_NovaLinhaCiclo.Qtd_MinutoCiclo = Me.QtdMinutosCurtaDuraçãoCiclo
+
+                                            If Me.TPEQP = "TRF" Or Me.TPEQP = "TR3" Or Me.TPEQP = "TR2" Then
+                                                I_l_NovaLinhaCiclo.Din_InicioCiclo = I_l_DVCiclos(0).Item("DIN_FIMCICLO")
+                                                I_l_NovaLinhaCiclo.Qtd_MinutoUtilizado = Me.QtdMinutosUtilizadosCurtaDuração - quantidadeRestanteaSetUtilizadaPrimeiroCiclo
+                                            Else
+                                                I_l_NovaLinhaCiclo.Din_InicioCiclo = I_l_LinhaEventoClassificador.Item("DIN_OCORRENCIA")
+                                                I_l_NovaLinhaCiclo.Qtd_MinutoUtilizado = Me.QtdMinutosUtilizadosCurtaDuração
+                                            End If
+
+                                            Me.Ciclos.AddCiclosRow(I_l_NovaLinhaCiclo)
+
+                                        End If
+
+                                    End If
+
+                                Else
+
+                                    ' GRUPO NÃO ESTA DENTRO DE NENHUM CICLO EXISTENTE
+
+                                    ' RESTRIÇÃO SE ENCONTRA FORA DE CICLOS EXISTENTES DETERMINANDO A CRIAÇÃO DE NOVO CICLO
+                                    ' RECUPERA O EVENTO COMPLEMTAR DA RESTRIÇÃO EM QUESTÃO PARA ANALISAR SE ESTE SE ENCONTRA DENTRO DE ALGUM CICLO EXISTENTE
+                                    I_l_DVEventosComplementares.RowFilter = "ID_GRUPO = " & I_l_LinhaEventoClassificador.Item("ID_GRUPO") &
+                                                                            " AND FLG_INICIORESTRICAO = " & False
+
+                                    ' VERIFICA SE A DURAÇÃO DO GRUPO CABE NO HORIZONTE DO CICLO A SER CRIADO
+                                    I_l_DuraçãoGrupo = DateDiff(DateInterval.Minute,
+                                                                I_l_LinhaEventoClassificador.Item("DIN_OCORRENCIA"),
+                                                                I_l_DVEventosComplementares(0).Item("DIN_OCORRENCIA"))
+
+                                    ' DETERMINA O HORIZONTE DO CICLO
+                                    I_l_HorizonteCiclo = DateAdd(DateInterval.Minute, Me.QtdMinutosCiclo, I_l_LinhaEventoClassificador.Item("DIN_OCORRENCIA"))
+
+                                    ' VERIFICA SE OS CICLOS CRIADOS SÃO REFERENTES AO EVENTO CAUSADOR DA SINCRONIZAÇÃO, POIS
+                                    ' EM CASO POSITIVO A QUANTIDADE DE HORAS DISPONIVEIS DEVERÁ SER DISPONIBLIZADA PARA A
+                                    ' ROTINA DE CÁLCULO
+                                    If (Me.DataOcorrencia = I_l_LinhaEventoClassificador.Item("DIN_OCORRENCIA")) Then
+
+                                        Me.QtdMinutosDisponíveisCurtaDuração = Me.QtdMinutosCurtaDuraçãoCiclo
+                                        Me.DuraçãoGrupo = I_l_DuraçãoGrupo
+
+                                        ' AJUSTA AS QUANTIDADES UTILIZADAS E DISPONIBILIZADAS
+                                        If (I_l_DuraçãoGrupo > Me.QtdMinutosContínuosCurtaDuraçãoLTR And Me.TPEQP = "LTR") Then
+                                            Me.QtdMinutosDisponíveisCurtaDuração = Me.QtdMinutosContínuosCurtaDuraçãoLTR
+                                        End If
+
+                                    Else
+                                        ' AJUSTA O CALCULO DAS DURAÇÕES DO GRUPO AFETADO PELO SINCRONISMO
+                                        Me.Spi_EqualizarGrupoAfetado(I_l_LinhaEventoClassificador.Item("ID_GRUPO"),
+                                                                    I_l_DuraçãoGrupo,
+                                                                    Me.QtdMinutosCurtaDuraçãoCiclo,
+                                                                    I_l_LinhaEventoClassificador.Item("DIN_OCORRENCIA"))
+                                    End If
+
+                                    ' DETERMINA A QUANTIDADE DE MINUTOS DE CURTA DURAÇÃO UTILIZADOS PELO GRUPO NO CICLO
+                                    Me.QtdMinutosUtilizadosCurtaDuração = IIf(I_l_DuraçãoGrupo > Me.QtdMinutosCurtaDuraçãoCiclo, Me.QtdMinutosCurtaDuraçãoCiclo, I_l_DuraçãoGrupo)
+
+                                    ' AJUSTA AS QUANTIDADES UTILIZADAS E DISPONIBILIZADAS
+                                    If (I_l_DuraçãoGrupo > Me.QtdMinutosContínuosCurtaDuraçãoLTR And Me.TPEQP = "LTR") Then
+                                        Me.QtdMinutosUtilizadosCurtaDuração = Me.QtdMinutosContínuosCurtaDuraçãoLTR
+                                    End If
+
+                                    ' CRIA O CICLO DA RESTRIÇÃO EM QUESTÃO
+                                    Me.Fpi_InsertCiclo(I_l_LinhaEventoClassificador.Item("DIN_OCORRENCIA"),
+                                                    I_l_HorizonteCiclo,
+                                                    Me.QtdMinutosCurtaDuraçãoCiclo,
+                                                    Me.QtdMinutosUtilizadosCurtaDuração,
+                                                    False)
+
+                                    ' ADICIONA O CICLO NA ESTRUTURA DE MEMÓRIA
+                                    I_l_NovaLinhaCiclo = Me.Ciclos.NewCiclosRow
+
+                                    I_l_NovaLinhaCiclo.Id_Ciclo = Fpi_GeraContadorCiclo()
+                                    I_l_NovaLinhaCiclo.TpEqp_Id = Me.TPEQP
+                                    I_l_NovaLinhaCiclo.Eqp_Id = Me.EQP
+                                    I_l_NovaLinhaCiclo.Din_InicioCiclo = I_l_LinhaEventoClassificador.Item("DIN_OCORRENCIA")
+                                    I_l_NovaLinhaCiclo.Din_FimCiclo = I_l_HorizonteCiclo
+                                    I_l_NovaLinhaCiclo.Qtd_MinutoCiclo = Me.QtdMinutosCurtaDuraçãoCiclo
+                                    I_l_NovaLinhaCiclo.Qtd_MinutoUtilizado = Me.QtdMinutosUtilizadosCurtaDuração
+
+                                    Me.Ciclos.AddCiclosRow(I_l_NovaLinhaCiclo)
+
+                                End If
+
+                            End If
+
+                        Else
+
+                            ' DURAÇÃO DO GRUPO EXTRAPOLA O HORIZONTE DO CICLO, DETERMINANDO A CRIAÇÃO DE MAIS DE UM CICLO
+                            Dim I_l_MinutosDisponíveisTemp As Integer
+                            Dim I_l_UltimoCiclo As Boolean
+                            Dim I_l_DataFimUltimoCicloCriado As DateTime
+                            Dim I_l_InicioDeGrupoEmCicloConsumido As Boolean
+
+                            ' VERIFICA SE O GRUPO SE INICIA DENTRO DE ALGUM CICLO
+                            I_l_LinhaCiclo = Me.Fpi_RetornaCicloIdentificador(I_l_LinhaEventoClassificador.Item("DIN_OCORRENCIA"), I_l_DVEventosComplementares(0).Item("DIN_OCORRENCIA"))
+
+
+                            If (Not IsNothing(I_l_LinhaCiclo)) Then
+
+                                I_l_InicioDeGrupoEmCicloConsumido = True
+                                I_l_ExcedenteGrupo = DateDiff(DateInterval.Minute, I_l_LinhaCiclo.Item("DIN_FIMCICLO"), I_l_LinhaEventoComplementar.Item("DIN_OCORRENCIA")) - Math.Truncate(DateDiff(DateInterval.Minute, I_l_LinhaCiclo.Item("DIN_FIMCICLO"), I_l_LinhaEventoComplementar.Item("DIN_OCORRENCIA")) / Me.QtdMinutosCiclo) * Me.QtdMinutosCiclo
+
+                                'VERIFICANDO SE O CICLO QUE JÁ EXISTE E O GRUPO SE INICIA ESTÁ COMPLETAMENTE CONSUMIDO
+                                If I_l_LinhaCiclo.Item("Qtd_MinutoUtilizado") = Me.QtdMinutosCurtaDuraçãoCiclo Then
+                                    ' CALCULA O EXCEDENTE DO GRUPO EM RELAÇÃO A PARCELA DO CICLO POSIVELMENTE UTILIZADA PELO GRUPO
+
+                                    If Me.TPEQP = "TR2" Or Me.TPEQP = "TRF" Or Me.TPEQP = "TR3" Then
+                                        'I_l_ExcedenteGrupo = DateDiff(DateInterval.Minute, I_l_LinhaEventoClassificador.Item("DIN_OCORRENCIA"), I_l_LinhaEventoComplementar.Item("DIN_OCORRENCIA")) - Math.Truncate(DateDiff(DateInterval.Minute, I_l_LinhaEventoClassificador.Item("DIN_OCORRENCIA"), I_l_LinhaEventoComplementar.Item("DIN_OCORRENCIA")) / Me.QtdMinutosCiclo) * Me.QtdMinutosCiclo
+                                        ' HA NECESSIDADE DE CRIAÇÃO DE MAIS DE UM CICLO PARA ATENDER AO GRUPO EM QUESTÃO
+                                        I_l_QtdCiclosGrupo = Math.Truncate(Math.Ceiling(I_l_ExcedenteGrupo / Me.QtdMinutosCiclo))
+                                    End If
+
+                                Else
+                                    If Me.TPEQP = "TR2" Or Me.TPEQP = "TRF" Or Me.TPEQP = "TR3" Then
+
+                                        'SE O CICLO QUE JÁ EXISTE E O GRUPO SE INICIA AINDA TEM MINUTOS DISPONÍVEIS
+                                        I_l_QtdCiclosGrupo = Math.Truncate(Math.Ceiling(I_l_ExcedenteGrupo / Me.QtdMinutosCiclo)) + 1
+                                    End If
+
+                                End If
+                            Else
+                                ' CALCULA O EXCEDENTE DO GRUPO EM RELAÇÃO AO CICLO 
+                                I_l_ExcedenteGrupo = DateDiff(DateInterval.Minute, I_l_LinhaEventoClassificador.Item("DIN_OCORRENCIA"), I_l_LinhaEventoComplementar.Item("DIN_OCORRENCIA"))
+
+                                If Me.TPEQP = "TR2" Or Me.TPEQP = "TRF" Or Me.TPEQP = "TR3" Then
+                                    I_l_ExcedenteGrupo = DateDiff(DateInterval.Minute, I_l_LinhaEventoClassificador.Item("DIN_OCORRENCIA"), I_l_LinhaEventoComplementar.Item("DIN_OCORRENCIA")) - Math.Truncate(DateDiff(DateInterval.Minute, I_l_LinhaEventoClassificador.Item("DIN_OCORRENCIA"), I_l_LinhaEventoComplementar.Item("DIN_OCORRENCIA")) / Me.QtdMinutosCiclo) * Me.QtdMinutosCiclo
+                                    ' HA NECESSIDADE DE CRIAÇÃO DE MAIS DE UM CICLO PARA ATENDER AO GRUPO EM QUESTÃO
+                                    I_l_QtdCiclosGrupo = Math.Truncate(Math.Ceiling((I_l_DuraçãoGrupo - I_l_ExcedenteGrupo) / Me.QtdMinutosCiclo)) + 1
+                                End If
+
+                            End If
+
+                            ' HA NECESSIDADE DE CRIAÇÃO DE MAIS DE UM CICLO PARA ATENDER AO GRUPO EM QUESTÃO
+                            If Me.TPEQP <> "TR2" And Me.TPEQP <> "TRF" And Me.TPEQP <> "TR3" Then
+                                I_l_QtdCiclosGrupo = CInt(Math.Ceiling((I_l_DuraçãoGrupo - I_l_ExcedenteGrupo) / Me.QtdMinutosCiclo)) + 1
+                            End If
+
+                            Dim fimPrimeiroCicloUtilizado As DateTime
+
+                            For I_l_ContadorAuxiliar = 1 To I_l_QtdCiclosGrupo
+
+                                ' VERIFICA A CRIAÇÃO DO ULTIMO CICLO
+                                If (I_l_ContadorAuxiliar = I_l_QtdCiclosGrupo) Then
+
+                                    I_l_UltimoCiclo = True
+
+                                    I_l_DataInicialCiclo = I_l_DataFimUltimoCicloCriado
+                                    I_l_DataFimUltimoCicloCriado = DateAdd(DateInterval.Minute, Me.QtdMinutosCiclo, I_l_DataInicialCiclo)
+
+                                    ' VERIFICA SE EXISTE DURAÇÃO DE CURTA VISANDO SEU ABATIMENTO
+                                    If (Me.Fpi_ExisteDuraçãoCurta(I_l_LinhaEventoClassificador) = True) Then
+                                        Me.QtdMinutosUtilizadosCurtaDuração = Me.QtdMinutosCurtaDuraçãoCiclo - I_l_ExcedenteGrupo
+                                        If I_l_InicioDeGrupoEmCicloConsumido Then
+                                            Me.QtdMinutosUtilizadosCurtaDuração = I_l_ExcedenteGrupo
+                                        End If
+                                    Else
+                                        Me.QtdMinutosUtilizadosCurtaDuração = 0
+                                    End If
+
+                                    If (Me.QtdMinutosUtilizadosCurtaDuração < 0) Then
+                                        Me.QtdMinutosUtilizadosCurtaDuração = Me.QtdMinutosCurtaDuraçãoCiclo
+                                    End If
+
+                                    ' ADICIONA O CICLO
+                                    Me.Fpi_InsertCiclo(I_l_DataInicialCiclo,
+                                                    I_l_DataFimUltimoCicloCriado,
+                                                    Me.QtdMinutosCurtaDuraçãoCiclo,
+                                                    Me.QtdMinutosUtilizadosCurtaDuração,
+                                                    False)
+
+                                    ' ADICIONA O CICLO NA ESTRUTURA DE MEMÓRIA
+                                    I_l_NovaLinhaCiclo = Me.Ciclos.NewCiclosRow
+
+                                    I_l_NovaLinhaCiclo.Id_Ciclo = Fpi_GeraContadorCiclo()
+                                    I_l_NovaLinhaCiclo.TpEqp_Id = Me.TPEQP
+                                    I_l_NovaLinhaCiclo.Eqp_Id = Me.EQP
+                                    I_l_NovaLinhaCiclo.Din_InicioCiclo = I_l_DataInicialCiclo
+                                    I_l_NovaLinhaCiclo.Din_FimCiclo = I_l_DataFimUltimoCicloCriado
+                                    I_l_NovaLinhaCiclo.Qtd_MinutoCiclo = Me.QtdMinutosCurtaDuraçãoCiclo
+                                    I_l_NovaLinhaCiclo.Qtd_MinutoUtilizado = Me.QtdMinutosUtilizadosCurtaDuração
+
+                                    Me.Ciclos.AddCiclosRow(I_l_NovaLinhaCiclo)
+
+                                    I_l_MinutosDisponíveisTemp = I_l_MinutosDisponíveisTemp + Me.QtdMinutosCurtaDuraçãoCiclo
+
+                                    ' VERIFICA SE OS CICLOS CRIADOS SÃO REFERENTES AO EVENTO CAUSADOR DA SINCRONIZAÇÃO, POIS
+                                    ' EM CASO POSITIVO A QUANTIDADE DE HORAS DISPONIVEIS DEVERÁ SER DISPONIBLIZADA PARA A
+                                    ' ROTINA DE CÁLCULO
+                                    If (Me.DataOcorrencia = I_l_LinhaEventoClassificador.Item("DIN_OCORRENCIA")) Then
+
+                                        Me.QtdMinutosDisponíveisCurtaDuração = I_l_MinutosDisponíveisTemp
+                                        Me.DuraçãoGrupo = I_l_DuraçãoGrupo
+
+                                        ' AJUSTA AS QUANTIDADES UTILIZADAS E DISPONIBILIZADAS
+                                        If (I_l_DuraçãoGrupo > Me.QtdMinutosContínuosCurtaDuraçãoLTR And Me.TPEQP = "LTR") Then
+                                            Me.QtdMinutosDisponíveisCurtaDuração = Me.QtdMinutosContínuosCurtaDuraçãoLTR
+                                        End If
+
+                                    Else
+
+                                        ' AJUSTA O CALCULO DAS DURAÇÕES DO GRUPO AFETADO PELO SINCRONISMO
+                                        Me.Spi_EqualizarGrupoAfetado(I_l_LinhaEventoClassificador.Item("ID_GRUPO"),
+                                                                    I_l_DuraçãoGrupo,
+                                                                    I_l_MinutosDisponíveisTemp,
+                                                                    I_l_LinhaEventoClassificador.Item("DIN_OCORRENCIA"))
+                                    End If
+
+                                Else
+
+                                    I_l_UltimoCiclo = False
+
+
+                                    'If I_l_ContadorAuxiliar > 1 Then
+                                    '    I_l_DataInicialCiclo = I_l_DataFimUltimoCicloCriado
+                                    'End If
+
+                                    ' VERIFICA SE O GRUPO SE ENCONTRA DENTRO DE CICLO EXISTENTE
+                                    If (Me.TPEQP = "LTR" AndAlso Not (IsNothing(I_l_LinhaCiclo) And I_l_ContadorAuxiliar = 1)) Then
+
+                                        ' APENAS ATUALIZARÁ A QUANTIDADE DE HORAS UTILIZADAS DO CICLO
+
+                                        ' ATUALIZA O CONTADOR DE MINUTOS DISPONÍVEIS
+                                        I_l_MinutosDisponíveisTemp = I_l_MinutosDisponíveisTemp + (Me.QtdMinutosCurtaDuraçãoCiclo - I_l_LinhaCiclo.Item("QTD_MINUTOUTILIZADO"))
+
+                                        ' AJUSTA AS QUANTIDADES UTILIZADAS E DISPONIBILIZADAS
+                                        If (I_l_DuraçãoGrupo > Me.QtdMinutosContínuosCurtaDuraçãoLTR And Me.TPEQP = "LTR") Then
+                                            Me.QtdMinutosUtilizadosCurtaDuração = Me.QtdMinutosContínuosCurtaDuraçãoLTR
+                                        End If
+
+                                        ' ATUALIZA A QUANTIDADE DE HORAS DO CICLO NA BASE E EM MEMÓRIA
+                                        Me.Fpi_UpdateCiclo(I_l_LinhaCiclo.Item("DIN_INICIOCICLO"),
+                                                        Me.QtdMinutosCurtaDuraçãoCiclo,
+                                                        False)
+                                        I_l_IndiceCiclo = I_g_Util.Fpu_DatasetFind(Me.Ciclos,
+                                                                                "ID_CICLO",
+                                                                                I_l_LinhaCiclo.Item("ID_CICLO"))
+
+                                        Me.Ciclos.Rows(I_l_IndiceCiclo).Item("QTD_MINUTOUTILIZADO") = Me.QtdMinutosCurtaDuraçãoCiclo
+
+                                        ' DETERMINA A DATA A QUAL SERÁ UTILIZADA PARA CRIAÇÃO DO DEMAIS CICLOS
+                                        I_l_DataFimUltimoCicloCriado = Me.Ciclos.Rows(I_l_IndiceCiclo).Item("DIN_FIMCICLO")
+
+                                        'If Me.TPEQP = "TR2" Or Me.TPEQP = "TRF" Or Me.TPEQP = "TR3" Then
+                                        fimPrimeiroCicloUtilizado = I_l_DataFimUltimoCicloCriado
+                                        'End If
+                                    Else
+                                        'PRIMEIRO CICLO
+                                        If (Me.TPEQP = "TR2" Or Me.TPEQP = "TRF" Or Me.TPEQP = "TR3") AndAlso I_l_ContadorAuxiliar = 1 Then
+                                            ' DEVERÁ CRIAR NOVO CICLO
+                                            I_l_DataInicialCiclo = I_l_LinhaEventoClassificador.Item("DIN_OCORRENCIA")
+                                            If Not IsNothing(I_l_LinhaCiclo) Then
+                                                'I_l_DataInicialCiclo = fimPrimeiroCicloUtilizado
+                                                I_l_DataInicialCiclo = I_l_DataFimUltimoCicloCriado
+                                            End If
+
+                                            'NÃO É O ÚLTIMO CICLO
+                                        ElseIf (Me.TPEQP = "TR2" Or Me.TPEQP = "TRF" Or Me.TPEQP = "TR3") AndAlso I_l_ContadorAuxiliar > 1 Then
+                                            'I_l_DataInicialCiclo = DateAdd(DateInterval.Minute, Me.QtdMinutosCiclo, I_l_DataInicialCiclo)
+                                            'If Not IsNothing(I_l_LinhaCiclo) And I_l_ContadorAuxiliar = 1 Then
+                                            '    I_l_DataInicialCiclo = DateAdd(DateInterval.Minute, Me.QtdMinutosCiclo, I_l_DataFimUltimoCicloCriado)
+                                            'End If
+                                            I_l_DataInicialCiclo = I_l_DataFimUltimoCicloCriado
+                                        Else
+                                            ' DEVERÁ CRIAR NOVO CICLO
+                                            I_l_DataInicialCiclo = I_l_LinhaEventoClassificador.Item("DIN_OCORRENCIA")
+                                        End If
+
+
+                                        ' DETERMINA O HORIZONTE DO CICLO
+                                        I_l_HorizonteCiclo = DateAdd(DateInterval.Minute, Me.QtdMinutosCiclo, I_l_DataInicialCiclo)
+                                        'I_l_HorizonteCiclo = DateAdd(DateInterval.Minute, Me.QtdMinutosCiclo, I_l_LinhaEventoClassificador.Item("DIN_OCORRENCIA"))
+
+                                        ' DETERMINA A QUANTIDADE DE HORAS DE CURTA UTILIZADAS O CICLO
+                                        If (I_l_UltimoCiclo = True) Then
+                                            Me.QtdMinutosUtilizadosCurtaDuração = IIf(I_l_ExcedenteGrupo >= Me.QtdMinutosCurtaDuraçãoCiclo, Me.QtdMinutosCurtaDuraçãoCiclo, I_l_ExcedenteGrupo)
+                                        Else
+                                            Me.QtdMinutosUtilizadosCurtaDuração = Me.QtdMinutosCurtaDuraçãoCiclo
+                                        End If
+
+                                        ' AJUSTA AS QUANTIDADES UTILIZADAS E DISPONIBILIZADAS
+                                        If (I_l_DuraçãoGrupo > Me.QtdMinutosContínuosCurtaDuraçãoLTR And Me.TPEQP = "LTR") Then
+                                            Me.QtdMinutosUtilizadosCurtaDuração = Me.QtdMinutosContínuosCurtaDuraçãoLTR
+                                        End If
+
+                                        ' ADICIONA O CICLO
+                                        Me.Fpi_InsertCiclo(I_l_DataInicialCiclo,
+                                                        I_l_HorizonteCiclo,
+                                                        Me.QtdMinutosCurtaDuraçãoCiclo,
+                                                        Me.QtdMinutosCurtaDuraçãoCiclo,
+                                                        False)
+
+                                        ' ADICIONA O CICLO NA ESTRUTURA DE MEMÓRIA
+                                        I_l_NovaLinhaCiclo = Me.Ciclos.NewCiclosRow
+
+                                        I_l_NovaLinhaCiclo.Id_Ciclo = Fpi_GeraContadorCiclo()
+                                        I_l_NovaLinhaCiclo.TpEqp_Id = Me.TPEQP
+                                        I_l_NovaLinhaCiclo.Eqp_Id = Me.EQP
+                                        I_l_NovaLinhaCiclo.Din_InicioCiclo = I_l_DataInicialCiclo
+                                        I_l_NovaLinhaCiclo.Din_FimCiclo = I_l_HorizonteCiclo
+                                        I_l_NovaLinhaCiclo.Qtd_MinutoCiclo = Me.QtdMinutosCurtaDuraçãoCiclo
+                                        I_l_NovaLinhaCiclo.Qtd_MinutoUtilizado = Me.QtdMinutosCurtaDuraçãoCiclo
+
+                                        Me.Ciclos.AddCiclosRow(I_l_NovaLinhaCiclo)
+
+                                        ' ATUALIZA O CONTADOR DE MINUTOS DISPONÍVEIS
+                                        I_l_MinutosDisponíveisTemp = I_l_MinutosDisponíveisTemp + Me.QtdMinutosCurtaDuraçãoCiclo
+
+                                        ' DETERMINA A DATA A QUAL SERÁ UTILIZADA PARA CRIAÇÃO DO DEMAIS CICLOS
+                                        I_l_DataFimUltimoCicloCriado = I_l_HorizonteCiclo
+
+                                    End If
+
+                                End If
+
+                            Next
+
+                        End If
+
+                    End If
+
+                Next
+
+            End If
+
+            If (vaAjustaGrupoPrincipal = True) Then
+
+                ' AJUSTA O CALCULO DAS DURAÇÕES DO GRUPO AFETADO PELO SINCRONISMO
+                Me.Spi_EqualizarGrupoAfetado(Me.GrupoEspecial,
+                                            Me.DuraçãoGrupo,
+                                            Me.QtdMinutosDisponíveisCurtaDuração,
+                                            Me.DataOcorrencia)
+
+            End If
+
+        Catch ex As Exception
+            Throw
+        End Try
+
+    End Sub
